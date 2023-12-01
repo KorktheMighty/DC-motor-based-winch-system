@@ -1,0 +1,289 @@
+//Header files
+//From the C Library
+#include <stdio.h>
+//From the Microblaze library
+#include "xil_printf.h"
+#include "xparameters.h"
+#include "mb_interface.h"
+//From the local folder
+#include "hw_registers.h"
+
+//Function prototypes
+void delay_ms(unsigned short delay_time);
+void delay_us(unsigned short delay_time);
+unsigned char Get_Character();
+void Put_Character(unsigned char character);
+void Put_String(unsigned char string[]);
+void Put_String2(char *stringptr);
+void SPI_Initialize();
+void SPI_Joystick_Exchange(unsigned char switches);
+void microblaze_0_interrupt() __attribute__((interrupt_handler));
+
+// Constraints
+#define Y_CENTER 0x1FF
+#define X_CENTER 0x1FF
+#define CPR 350
+
+//Global variables
+unsigned short x_position, y_position;
+unsigned char buttons;
+unsigned short ms_counter = 0;
+unsigned short sa_counter = 0;
+unsigned char motor_direction;
+unsigned short y_positiontwo;
+unsigned short encoder_counter = 0;
+unsigned short rpm_counter = 0;
+unsigned short led_counter = 0;
+unsigned short led_pattern = 0x0000;
+unsigned short delta_count;
+unsigned short old_count;
+unsigned short tenths;
+unsigned short whole;
+unsigned short remainder;
+unsigned short cpm;
+unsigned short switches;
+unsigned char fstring[16];
+
+
+// Library of subroutines
+void microblaze_0_interrupt() {
+  unsigned short copy_INT_IPR;
+  copy_INT_IPR = INT_IPR;
+  if (copy_INT_IPR & 0x01) {
+    ms_counter++;
+    TIMER00_CSR = TIMER00_CSR;
+  }
+  if (copy_INT_IPR & 0x02) {
+    if (motor_direction == 0) {
+      sa_counter++;
+    } else {
+      sa_counter--;
+    }
+    PORT1_IPISR = PORT1_IPISR;
+  }
+  INT_IAR = copy_INT_IPR;
+}
+
+void SPI_Joystick_Exchange(unsigned char switches) {
+  unsigned char dummy, status, x_low, x_high, y_low, y_high;
+  dummy = 0x00;
+  SPISSR = 0;
+  delay_us(15);
+  switches |= 0x80;
+  SPIDTR = switches;
+  delay_us(10);
+  for (int i = 0; i < 4; i++) {
+    SPIDTR = dummy;
+    delay_us(10);
+  }
+
+  status = SPISR;
+  status &= SPI_TX_FIFO_EMPTY;
+  while (!status) {
+    status = SPISR;
+    ;
+    status &= SPI_TX_FIFO_EMPTY;
+  }
+  x_low = SPIDRR;
+  x_high = SPIDRR;
+  y_low = SPIDRR;
+  y_high = SPIDRR;
+  buttons = SPIDRR;
+  x_position = x_high * 256 + x_low;
+  y_position = y_high * 256 + y_low;
+  SPISSR = 1;
+}
+
+void SPI_Initialize() {
+  SPICR = MANUAL_SLAVE_SELECT + MASTER_MODE + SPI_ENABLED;
+  SPISSR = 1;
+}
+
+void delay_ms(unsigned short delay_time) {
+  unsigned short count;
+  for (; delay_time > 0; delay_time--) {
+    for (count = 0; count < 8300; count++) {
+    }
+  }
+}
+
+void delay_us(unsigned short delay_time) {
+  unsigned char count;
+  for (; delay_time > 0; delay_time--) {\
+    for (count = 0; count < 9; count++) {
+    }
+  }
+}
+
+unsigned char Get_Character() {
+  unsigned char status, character;
+  status = SERIAL2_STATUS;
+  status &= RX_FIFO_VALID_DATA;
+  while (!status) {
+    status = SERIAL2_STATUS;
+    status &= RX_FIFO_VALID_DATA;
+  }
+  character = SERIAL2_RX_FIFO;
+  return character;
+}
+
+void Put_Character(unsigned char character) {
+  unsigned char status;
+  status = SERIAL2_STATUS;
+  status &= TX_FIFO_FULL;
+  while (status) {
+    status = SERIAL2_STATUS;
+    status &= TX_FIFO_FULL;
+  }
+  SERIAL2_TX_FIFO = character;
+  return;
+}
+
+void Put_String(unsigned char string[]) {
+  unsigned char i = 0;
+  while (1) {
+    if (string[i] == 0x00) {
+      return;
+    } else {
+      Put_Character(string[i]);
+      i++;
+    }
+  }
+}
+
+void Put_String2(char *stringptr) {
+  unsigned char ch;
+  ch = *stringptr;
+  while (ch != 0x00) {
+    Put_Character(ch);
+    stringptr++;
+    ch = *stringptr;
+  }
+}
+
+////////
+//MAIN//
+////////
+int main() {
+	//Declare local variables & Initialize SPI, Port0
+	motor_direction = 0;
+	SPI_Initialize();
+
+	//Set Port0, Timer10, Timer 11
+	PORT0_DIRECTION = 0x00;
+	PORT0_DATA = motor_direction;
+	TIMER10_LOAD = 0x2000;
+	TIMER11_LOAD = 0;
+	TIMER10_CSR = ENABLE_ALL + PWM_MODE + ENABLE_TIMER + ENABLE_GEN_SIGNAL + DOWN_COUNTER;
+	TIMER11_CSR = ENABLE_ALL + PWM_MODE + ENABLE_TIMER + ENABLE_GEN_SIGNAL + DOWN_COUNTER;
+	//100,000 for 1ms
+	TIMER00_LOAD = 100000;
+	TIMER00_CSR = ENABLE_ALL + ENABLE_TIMER + ENABLE_INTS + LOAD_TIMER + AUTO_RELOAD + ENABLE_GEN_SIGNAL + DOWN_COUNTER;
+	TIMER00_CSR = ENABLE_ALL + ENABLE_TIMER + ENABLE_INTS + AUTO_RELOAD + ENABLE_GEN_SIGNAL + DOWN_COUNTER;
+
+	//Initialize Port1 and generate the interrupts
+	PORT1_DIRECTION = 0xFF;
+	PORT1_GIER = 0x80000000;
+	PORT1_IPIER = 0x01;
+	INT_IER = PORT1_INTR + TIMER0_INTR;
+	INT_MER = HARDWARE_INT_ENABLE + MASTER_INT_ENABLE;
+	microblaze_enable_interrupts();
+
+	// Loop A
+	while (1) {
+		if (ms_counter >= 50) {
+			switches = SWITCH_DATA;
+			//Mask out bits except switches 0,1
+			switches &= 0x03;
+			SPI_Joystick_Exchange(switches);
+			printf("y position: %d \n", y_position);
+
+			//Y position check block
+			if (y_position > Y_CENTER) {
+				y_positiontwo = y_position - Y_CENTER;
+				motor_direction = 1;
+			} else {
+				y_positiontwo = Y_CENTER - y_position;
+				motor_direction = 0;
+			}
+			//Multiply Y to match PMW
+			y_positiontwo *= 32;
+			//Stuff for joystick, and incrementing counters
+			TIMER11_LOAD = y_positiontwo;
+			PORT0_DATA = motor_direction;
+			SEVEN_SEG_DATA = y_positiontwo;
+			ms_counter = 0;
+			encoder_counter++;
+			rpm_counter++;
+			led_counter++;
+		}
+
+
+		//Loop B
+		if (encoder_counter >= 4) {
+			//Display to LCD screen
+			Put_String("\e[0;0H");
+			sprintf(fstring, "cnt: %04x", sa_counter);
+			Put_String(fstring);
+			//Set counter to 0 & toggle LED14
+			encoder_counter = 0;
+			if (led_pattern & 0x4000) {
+				led_pattern &= ~0x4000;
+			} else {
+				led_pattern |= 0x4000;
+			}
+		}
+
+		//RPM & Motor direction check
+		if (rpm_counter >= 5) {
+			if (motor_direction == 0x00) {
+				delta_count = sa_counter - old_count;
+			} else {
+				delta_count = old_count - sa_counter;
+			}
+		old_count = sa_counter;
+		//Display to LCD screen
+		Put_String("\e[0;9H");
+		sprintf(fstring, " d: %03x", delta_count);
+		Put_String(fstring);
+		//CPR stuff
+		cpm = delta_count * 4 * 60;
+		whole = cpm / CPR;
+		remainder = cpm % CPR;
+		tenths = (remainder * 10) / CPR;
+		//Display to LCD screen
+		Put_String("\e[1;0H");
+		sprintf(fstring, "sp: %02d.%d rpm ", whole, tenths);
+		Put_String(fstring);
+		//Motor direction check
+		if (motor_direction == 0) {
+			Put_String("cw ");
+		} else {
+			Put_String("ccw");
+		}
+
+		//Loop D
+		if (led_pattern & 0x2000) {
+			//Set bit 13
+			led_pattern &= ~0x2000;
+		} else {
+			//Clear bit 13
+			led_pattern |= 0x2000;
+		}
+		rpm_counter = 0;
+		}
+
+		// Loop C
+		if (led_counter >= 20) {
+			if (led_pattern & 0x8000) {
+				//Clear set 15
+				led_pattern &= ~0x8000;
+			} else {
+				//Clear bit 15
+				led_pattern |= 0x8000;
+			}
+			led_counter = 0;
+		}
+		LED_DATA = led_pattern;
+	}
+}
