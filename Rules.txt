@@ -1,0 +1,28 @@
+The controller must satisfy the following requirements:
+
+1.	At a rate of 20 times a second, the controller must read the input signal from the joystick and send the appropriate speed and direction output signals to the motor.
+
+2.	The speed output signal to the motor must be at a frequency less than 10 kHz.
+
+3.	At a rate of 10 times a second, the controller must update a display with the value of the output signals (speed and direction) that are being sent to the motor.
+
+4.	At a rate of 5 times a second, the controller must update a display with the current 16-bit value of the shaft encoder attached to the motor.
+
+5.	At a rate of 2 times a second, the controller must compute and update a display with the current speed of the motor in RPM (xx.x) and the direction in which the motor is rotating (cw or ccw).
+
+6.	At a rate of 1 time a second, the controller must toggle an LED to indicate that the controller is operating.
+
+Display for the LCD screen:
+
+
+c	n	t	:		x	x	x	x		d	:		x	x	x
+s	p	:		d	d	.	d		r	p	m		s	s	s
+
+
+cnt: is the sa_counter in HEX
+
+d: is the delta_counter in HEX
+
+sp: is the RPM in floating point representation using integer math (and rpm is its units)
+
+sss will be the cw or ccw that denotes motor direction in clockwise or counter-clockwise.
